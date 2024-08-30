@@ -12,6 +12,7 @@ import {
   Stack,
   Tooltip,
   Grid,
+  CircularProgress,
 } from "@mui/material";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import PauseIcon from "@mui/icons-material/Pause";
@@ -19,6 +20,7 @@ import { DetectionObject } from "./DetectionObject";
 import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
 import { Timer } from "@mui/icons-material";
+import InstructionPopup from "./components/models/Instructions";
 
 interface VideoPlayerProps {
   videoUrl: string;
@@ -27,7 +29,7 @@ interface VideoPlayerProps {
 const HOST_ADRESS =
   "http://ec2-18-195-241-68.eu-central-1.compute.amazonaws.com";
 
-const buttonStyles = {
+export const buttonStyles = {
   backgroundColor: "#7cd959",
   border: "2px solid #7cd959",
   color: "#000",
@@ -49,6 +51,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const timelineCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const isPlaying = useRef<boolean>(false);
+  const [playing, setPlaying] = useState<boolean>(false);
   const currentFrame = useRef<number>(0);
   const sessionIdRef = useRef<String>("");
   const effectRan = useRef(false);
@@ -64,6 +67,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
     useState<boolean>(false);
   const [hasTrackedAlready, setHasTrackedAlready] = useState<boolean>(false);
   const boxRef = useRef<HTMLDivElement>(null);
+  const [loading, setLoading] = useState(true);
   const [VIDEO_WIDTH, set_VIDEO_WIDTH] = useState(1280);
   const [VIDEO_HEIGHT, set_VIDEO_HEIGHT] = useState(720);
   const TIMELINE_WIDTH = 900;
@@ -114,7 +118,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
 
   useEffect(() => {
     if (newClick) {
-      console.log("drawing frame");
       drawFrame(currentFrame.current);
       //drawMasks();
       setNewClick(false);
@@ -123,7 +126,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
 
   const drawFrame = useCallback(
     (frameIdx: number) => {
-      console.log("drawing video");
       if (images.length > frameIdx) {
         const canvas = videoCanvasRef.current;
 
@@ -136,8 +138,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
                 canvas.width = img.width;
                 canvas.height = img.height;
                 ctx.drawImage(img, 0, 0);
-                console.log("Image drawn successfully");
-                console.log("drawing mask", detectionObjectList);
 
                 detectionObjectList.forEach((detectionObject) => {
                   if (currentFrame.current in detectionObject.outputs) {
@@ -207,7 +207,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
   };
 
   const playVideo = useCallback(() => {
-    console.log("playing");
     let lastTimestamp: number | null = null;
     const frameDuration = 1000 / 24; // 24 fps
 
@@ -235,6 +234,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
   }, [isPlaying.current, images.length, detectionObjectList]);
 
   const handlePlayPause = useCallback(() => {
+    setPlaying(!playing);
     isPlaying.current = !isPlaying.current;
     if (isPlaying.current) {
       playVideo();
@@ -269,7 +269,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
   }, [detectionObjectList]);
 
   const formatTime = (frame: number) => {
-    console.log("formatting");
+    console.log(frame, "FRAME");
     const totalSeconds = Math.floor(frame / FPS);
     const seconds = totalSeconds % 60;
     const frames = frame % FPS;
@@ -281,7 +281,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
   useEffect(() => {
     if (effectRan.current === false) {
       const createSession = async () => {
-        console.log("createSession called");
         sessionIdRef.current = "";
 
         try {
@@ -291,7 +290,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
               s3_link: videoUrl,
             }
           );
-          console.log(response);
           sessionIdRef.current = response.data.session_id;
           // Process and save the received images
           const newImages = response.data.frames.map(
@@ -301,8 +299,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
             })
           );
           setImages(newImages);
+          setLoading(false);
         } catch (err) {
           console.error("Failed to create session:", err);
+          setLoading(false);
         }
       };
       drawTimeline();
@@ -488,8 +488,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
         `${HOST_ADRESS}:8000/add_new_points/`,
         payload
       );
-      console.log(response);
-      console.log(detectionObjectList);
       response.data.addPoints.rleMaskList.forEach((maskObj: any) => {
         const objectId = maskObj.objectId;
         detectionObjectList[objectId].setOutput(
@@ -543,7 +541,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
         `${HOST_ADRESS}:8000/add_new_points/`,
         payload
       );
-      console.log(response);
       response.data.addPoints.rleMaskList.forEach((maskObj: any) => {
         const objectId = maskObj.objectId;
         detectionObjectList[objectId].setOutput(
@@ -554,11 +551,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
 
       setNewClick(true);
       setDetectionObjectList([...detectionObjectList]);
-      // Log the click information
-      console.log("Click registered:", {
-        normalizedPosition: { x: normalizedX, y: normalizedY },
-        frameIdx: currentFrame.current,
-      });
     }
   };
 
@@ -683,7 +675,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
               if (timeRef.current) {
                 timeRef.current.textContent = formatTime(currentFrame.current);
               }
-              console.log("Received frame:", frameData);
               // Process the frame data as needed
             } catch (error) {
               console.error("Error parsing frame JSON:", error);
@@ -718,12 +709,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
       Object.keys(detectionObjectList[detectionObjectList.length - 1].inputs)
         .length > 0);
 
-  console.log(detectionObjectList, "detectionObjectList");
-
   return (
     <Box px={5} pb={3} sx={{ height: "calc(100vh - 92px)", overflow: "auto" }}>
       <Grid container spacing={3} height="100%" mt={0}>
-        <Grid item md={3} sx={{ pt: "0 !important" }}>
+        <Grid
+          item
+          xl={3}
+          lg={4}
+          md={12}
+          sx={{ pt: "0 !important", mb: { xs: 4, sm: 4, md: 4, lg: 0, xl: 0 } }}
+        >
           <Card
             sx={{
               height: "100%",
@@ -892,8 +887,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
         {/* Right side: Video player with timeline */}
         <Grid
           item
-          md={9}
-          sx={{ display: "flex", justifyContent: "center", pt: "0 !important" }}
+          xl={9}
+          lg={8}
+          md={12}
+          sx={{
+            display: "flex",
+            justifyContent: "center",
+            pt: "0 !important",
+            width: "100%",
+            mb: { xs: 4, sm: 4, md: 4, lg: 0, xl: 0 },
+          }}
         >
           <Card
             sx={{
@@ -915,6 +918,24 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
                   margin: "0 auto", // Center the box horizontally
                 }}
               >
+                {loading && (
+                  <Typography
+                    align="center"
+                    color="white"
+                    sx={{
+                      display: "flex",
+                      height: "100%",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <CircularProgress
+                      sx={{ color: "#fff", mr: 1.5 }}
+                      size={26}
+                    />{" "}
+                    Loading...
+                  </Typography>
+                )}
                 <canvas
                   ref={videoCanvasRef}
                   style={{
@@ -1061,29 +1082,30 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
                   variant="contained"
                   onClick={handlePlayPause}
                   disabled={isCurrentlyTracking}
-                  startIcon={
-                    isPlaying.current ? <PauseIcon /> : <PlayArrowIcon />
-                  }
+                  startIcon={playing ? <PauseIcon /> : <PlayArrowIcon />}
                 >
-                  {isPlaying ? "Pause" : "Play"}
+                  {playing ? "Pause" : "Play"}
                 </Button>
                 <Typography
                   ref={timeRef}
                   variant="body1"
-                  sx={{ ml: 2, color: "white" }}
-                />
+                  sx={{ ml: 1, color: "white", minWidth: 60 }}
+                  textAlign="center"
+                >
+                  00:00
+                </Typography>
               </Box>
-              <Box sx={{ textAlign: "center" }}>
+              <Box sx={{ textAlign: "center", overflow: "auto" }}>
                 <canvas
                   ref={timelineCanvasRef}
-                  width={TIMELINE_WIDTH}
+                  width={window.innerWidth < 991 ? "" : TIMELINE_WIDTH}
                   height={TIMELINE_HEIGHT}
                   onClick={
                     isCurrentlyTracking ? undefined : handleTimelineClick
                   }
                   style={{
                     cursor: "pointer",
-                    borderRadius: "4px",
+                    borderRadius: "40px",
                     boxShadow: "0 1px 2px rgba(0,0,0,0.1)",
                   }}
                 />
@@ -1092,6 +1114,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
           </Card>
         </Grid>
       </Grid>
+      <InstructionPopup />
     </Box>
   );
 };
