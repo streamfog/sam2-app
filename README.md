@@ -129,4 +129,4 @@ Please feel free to submit pull requests or open issues to discuss potential imp
 
 ## License
 
-[MIT License](LICENSE)
+[Apache License 2.0](LICENSE)
