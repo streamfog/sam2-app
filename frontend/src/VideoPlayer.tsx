@@ -27,7 +27,7 @@ interface VideoPlayerProps {
 }
 
 const HOST_ADRESS =
-  "http://ec2-18-195-241-68.eu-central-1.compute.amazonaws.com";
+  "http://ec2-12-345-67-890.eu-central-1.compute.amazonaws.com";
 
 export const buttonStyles = {
   backgroundColor: "#7cd959",
@@ -107,7 +107,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
     }
   };
 
-  const [currentStep, setCurrentStep] = useState(1);
 
   interface ImageObject {
     id: number;
@@ -565,6 +564,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
       JSON.parse(input);
       return true;
     } catch (error) {
+      console.log(error);
       return false;
     }
   }
@@ -598,29 +598,48 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
     }
   }
 
-  async function handleDownloadVideo() {
+  async function generateJSON() {
+    const response = await axios.get(
+      `${HOST_ADRESS}:8000/masks/${sessionIdRef.current}`,
+    );
+    return response.data;
+  }
+
+  async function handleDownloadJSON() {
     try {
-      const videoBlob = await generateVideo({
-        sessionId: sessionIdRef.current,
-        effect: "remove_background",
+      setLoading(true);
+
+      // Fetch the JSON data
+      const jsonData = await generateJSON();
+
+      // Create a Blob from the JSON data
+      const blob = new Blob([JSON.stringify(jsonData, null, 2)], {
+        type: 'application/json',
       });
 
-      // Create a URL for the blob
-      const videoUrl = URL.createObjectURL(videoBlob);
+      // Create a URL for the Blob
+      const url = window.URL.createObjectURL(blob);
 
-      // Function to trigger download
-      const downloadVideo = () => {
-        const a = document.createElement("a");
-        a.href = videoUrl;
-        a.download = "generated_video.webm";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      };
+      // Create a temporary anchor element
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = 'masks.json'; // Name of the downloaded file
 
-      downloadVideo();
+      // Append the anchor to the body
+      document.body.appendChild(a);
+
+      // Programmatically click the anchor to trigger the download
+      a.click();
+
+      // Clean up by removing the anchor element and revoking the Blob URL
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+
+      setLoading(false);
     } catch (error) {
-      console.error("Failed to generate video:", error);
+      console.error("Failed to download JSON:", error);
+      setLoading(false);
     }
   }
 
@@ -628,40 +647,41 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
     const processStream = async () => {
       currentFrame.current = 0;
 
-      try {
-        const response = await fetch(
-          `${HOST_ADRESS}:8000/propagate_in_video/`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "multipart/x-savi-stream",
-            },
-            body: JSON.stringify({
-              sessionId: sessionIdRef.current,
-              start_frame_index: 0,
-            }),
-          }
-        );
-        if (!response.body) {
-          return;
+      const response = await fetch(
+        `${HOST_ADRESS}:8000/propagate_in_video/`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/x-ndjson",
+          },
+          body: JSON.stringify({
+            sessionId: sessionIdRef.current,
+            start_frame_index: 0,
+          }),
         }
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
+      );
+      if (!response.body) {
+        return;
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
 
-        let buffer = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-          const chunk = decoder.decode(value);
-          const first100 = chunk.slice(0, 100);
-          const last100 = chunk.slice(-100);
-          buffer += chunk;
+        const chunk = decoder.decode(value);
+        buffer += chunk;
 
-          if (isValidJSON(buffer)) {
+        const jsonObjects = buffer.split('frameseparator');
+        buffer = jsonObjects.pop() || "";  // Keep the last incomplete chunk in the buffer
+
+        for (const jsonStr of jsonObjects) {
+          if (jsonStr.trim()) {
             try {
-              const frameData = JSON.parse(buffer);
+              const frameData = JSON.parse(jsonStr);
               currentFrame.current = frameData.frameIndex;
               frameData.results.forEach((maskResult: any) => {
                 detectionObjectList[maskResult.objectId].setOutput(
@@ -675,15 +695,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
               if (timeRef.current) {
                 timeRef.current.textContent = formatTime(currentFrame.current);
               }
-              // Process the frame data as needed
             } catch (error) {
               console.error("Error parsing frame JSON:", error);
             }
-            buffer = "";
           }
         }
-      } catch (error) {
-        console.error("Error processing stream:", error);
       }
     };
     setTrackingEnabled(false);
@@ -874,7 +890,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
               </Button>
               <Button
                 variant="contained"
-                onClick={handleDownloadVideo}
+                onClick={handleDownloadJSON}
                 disabled={!hasTrackedAlready || isCurrentlyTracking}
                 sx={buttonStyles}
               >
@@ -941,7 +957,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
                   style={{
                     position: "absolute",
                     width: "100%",
-                    height: "100%",
+                    height: "auto",
                     top: 0,
                     left: 0,
                     border: "1px solid rgba(255, 255, 255, 0.2)",
@@ -978,7 +994,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl }) => {
                         const y = normalizedY * VIDEO_HEIGHT;
                         const label =
                           detectionObject.inputs[currentFrame.current].labels[
-                            pointIndex
+                          pointIndex
                           ];
                         const markerId = `${objectIndex}-${pointIndex}`;
 

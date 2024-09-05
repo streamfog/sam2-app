@@ -1,22 +1,24 @@
 from typing import List
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
-import torch
-import numpy as np
-import requests
-import uuid
-import os
-from sam2.build_sam import build_sam2_video_predictor
-from sam2.utils.amg import mask_to_rle_pytorch, rle_to_mask
-import json
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
-import subprocess
-from fastapi import HTTPException
+from pydantic import BaseModel
+
 import base64
-import glob
 import cv2
+import glob
+import json
+import numpy as np
+import os
+import requests
+import shutil
+import torch
+import uuid
 from PIL import Image
+
+from sam2.build_sam import build_sam2_video_predictor
+from sam2.utils.amg import mask_to_rle_pytorch, rle_to_mask
+
 
 app = FastAPI()
 
@@ -41,12 +43,6 @@ checkpoint = "./sam2_hiera_small.pt"
 model_cfg = "sam2_hiera_s.yaml"
 
 predictor = build_sam2_video_predictor(model_cfg, checkpoint)
-print(predictor.fill_hole_area)
-# Base path for downloading videos
-video_dir = "/tmp/videos/"
-
-# Ensure video directory exists
-os.makedirs(video_dir, exist_ok=True)
 
 class CreateSessionData(BaseModel):
     s3_link: str
@@ -63,13 +59,11 @@ async def create_session(data: CreateSessionData):
         session_id = str(uuid.uuid4())
 
         # Create directories
-        video_dir = "./tmp/videos"
         frames_dir = f"./tmp/{session_id}"
-        os.makedirs(video_dir, exist_ok=True)
         os.makedirs(frames_dir, exist_ok=True)
 
         # Download the video from the S3 link
-        video_path = os.path.join(video_dir, f"{session_id}.mp4")
+        video_path = os.path.join(frames_dir, f"{session_id}.mp4")
         response = requests.get(data.s3_link)
         
         with open(video_path, 'wb') as f:
@@ -85,7 +79,7 @@ async def create_session(data: CreateSessionData):
             f"{frames_dir}/%03d.jpg"
         ]
         subprocess.run(ffmpeg_command, check=True)
-
+        os.remove(video_path)
         # Initialize the predictor and state with the downloaded video
         inference_state = predictor.init_state(frames_dir)
 
@@ -185,7 +179,7 @@ def generate_frames(sessionId):
                 "results": rleMaskList
             }
         session["results"][out_frame_idx] = rleMaskList
-        yield json.dumps(return_object)
+        yield json.dumps(return_object) + "frameseparator"
 
 class PropagateData(BaseModel):
     sessionId: str
@@ -220,7 +214,6 @@ async def generate(data: GenerateData):
     for frame_idx in range(1, 241):  # Assuming 240 frames as in the original code
         input_image_path = os.path.join(frames_dir, f"{frame_idx:03d}.jpg")
         output_image_path = os.path.join(output_dir, f"{frame_idx:03d}.png")
-        print(frame_idx)
         if not os.path.exists(input_image_path):
             continue
 
@@ -238,6 +231,7 @@ async def generate(data: GenerateData):
 
         # Apply the mask to the input image
         input_image[:, :, 3] = mask.astype(np.uint8) * 255
+        input_image[mask == 0, :3] = [0, 0, 0]
 
         # Save the masked image as PNG
         Image.fromarray(input_image).save(output_image_path)
@@ -259,25 +253,44 @@ async def generate(data: GenerateData):
     # Return the video file
     return FileResponse(output_video_path, media_type="video/webm", filename="output.webm")
 
+@app.get("/masks/{sessionId}")
+async def get_masks(sessionId: str):
+    # Retrieve the session by session ID
+    session = session_states.get(sessionId)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session ID not found.")
 
+    results = session["results"]
+    if not results:
+        raise HTTPException(status_code=404, detail="No results found for this session.")
+
+    # Return all masks as JSON
+    return {"sessionId": sessionId, "frames": results}
 
 @app.delete("/delete_session/{session_id}")
 async def delete_session(session_id: str):
-    try:
-        # Remove the session state
-        session = session_states.pop(session_id, None)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session ID not found.")
+    global predictor
+    # Remove the session state
+    session = session_states.pop(session_id, None)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session ID not found.")
 
-        # Optionally, remove the video file
-        video_path = os.path.join(video_dir, f"{session_id}.mp4")
-        if os.path.exists(video_path):
-            os.remove(video_path)
+    inference_state = session["inference_state"]
+    predictor.reset_state(inference_state)
+    del inference_state
+    predictor = build_sam2_video_predictor(model_cfg, checkpoint)
 
-        return {"message": "Session deleted successfully."}
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    torch.cuda.empty_cache()
+    print(session_states)
+
+    # Optionally, remove the video file
+    frames_dir = session["frames_dir"]
+    if os.path.exists(frames_dir):
+        shutil.rmtree(frames_dir)
+
+    return {"message": "Session deleted successfully."}
+
+
 
 if __name__ == "__main__":
     import uvicorn

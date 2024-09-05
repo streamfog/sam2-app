@@ -6,14 +6,10 @@ const Header = () => {
   return (
     <Box sx={{ px: 5, py: 3 }}>
       <Box sx={{ position: "relative" }}>
-        <img
-          src={getImageUrl("app-logo-with-name.png")}
-          style={{ maxWidth: 280 }}
-        />
         <Typography
           sx={{
             position: "absolute",
-            left: 105,
+            left: 0,
             bottom: -6,
             fontSize: 12,
             textTransform: "uppercase",
@@ -21,7 +17,7 @@ const Header = () => {
             opacity: 1,
           }}
         >
-          Segment Anything
+          Segment Anything 2 Demo
         </Typography>
       </Box>
     </Box>
