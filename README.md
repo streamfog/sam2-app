@@ -3,6 +3,8 @@
 This project provides an open-source implementation of the Segment Anything 2 (SAM2) demo. It consists of a FastAPI backend that can run on GPU-enabled servers and a React-based frontend for interaction.
 It runs on g4dn.xlarge instance using an Nvidia T4 for around $0.50/h.
 
+![SAM2 Demo](screenshot.png)
+
 **Note:** This is a work in progress. Contributions are welcome!
 
 ## Project Structure

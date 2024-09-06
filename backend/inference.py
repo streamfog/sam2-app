@@ -12,6 +12,7 @@ import numpy as np
 import os
 import requests
 import shutil
+import subprocess
 import torch
 import uuid
 from PIL import Image
